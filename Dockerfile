@@ -1,52 +1,48 @@
-FROM ubuntu:latest
+FROM centos:6
 
-ENV BINUTILS_VERSION binutils-2.27
-ENV GCC_VERSION gcc-6.4.0
-ENV ISL_VERSION isl-0.16.1
-ENV CLOOG_VERSION cloog-0.18.1
-ENV NEWLIB_VERSION newlib-2.4.0
+ENV BINUTILS_VERSION binutils-2.19.1
+ENV GCC_VERSION gcc-4.4.0
+ENV GMP_VERSION=gmp-4.1.4
+ENV MPFR_VERSION=mpfr-2.4.2
 
-ENV PREFIX /opt/m68k/$GCC_VERSION
-ENV TARGET m68k-elf
-ENV ENABLE_LANGUAGES c,c++
+ENV PREFIX /opt/tms9900/$GCC_VERSION
+ENV TARGET tms9900
+ENV ENABLE_LANGUAGES c
 ENV PATH=$PATH:$PREFIX/bin
 
-RUN apt-get update && apt-get install -y wget unzip build-essential gcc-5 libgmp-dev libmpfr-dev libmpc-dev && rm -rf /var/lib/apt/lists/*
+RUN yum update -y && yum install -y texinfo wget unzip gcc patch make srecord
 
-RUN mkdir /tmp/downloads && cd /tmp/downloads \
-  && wget http://ftp.gnu.org/pub/gnu/binutils/$BINUTILS_VERSION.tar.bz2 \
-  && wget http://ftp.gnu.org/pub/gnu/gcc/$GCC_VERSION/$GCC_VERSION.tar.xz \
-  && wget ftp://gcc.gnu.org/pub/gcc/infrastructure/$ISL_VERSION.tar.bz2 \
-  && wget ftp://gcc.gnu.org/pub/gcc/infrastructure/$CLOOG_VERSION.tar.gz \
-  && wget ftp://sourceware.org/pub/newlib/$NEWLIB_VERSION.tar.gz \
+ADD files /tmp/patch
+
+RUN bash \
+  && mkdir /tmp/downloads && cd /tmp/downloads \
+  && wget https://ftp.gnu.org/pub/gnu/binutils/$BINUTILS_VERSION.tar.bz2 \
+  && wget https://ftp.gnu.org/pub/gnu/gcc/$GCC_VERSION/$GCC_VERSION.tar.bz2 \
+  && wget https://ftp.gnu.org/gnu/gmp/$GMP_VERSION.tar.gz \
+  && wget https://ftp.gnu.org/gnu/mpfr/$MPFR_VERSION.tar.gz \
   && mkdir /tmp/build && cd /tmp/build \
-  && tar jxvf ../downloads/$BINUTILS_VERSION.tar.bz2 \
-  && tar xvf ../downloads/$GCC_VERSION.tar.xz \
-  && tar jxvf ../downloads/$ISL_VERSION.tar.bz2 \
-  && tar zxvf ../downloads/$CLOOG_VERSION.tar.gz \
-  && tar zvxf ../downloads/$NEWLIB_VERSION.tar.gz \
-  && rm -v /tmp/downloads/* \
-  && mv $ISL_VERSION ./$GCC_VERSION/isl \
-  && mv $CLOOG_VERSION ./$GCC_VERSION/cloog \
-  && mv $NEWLIB_VERSION/libgloss/m68k/io-read.c $NEWLIB_VERSION/libgloss/m68k/io-read.bak \
-  && sed -e 's/ssize_t/_READ_WRITE_RETURN_TYPE/g' $NEWLIB_VERSION/libgloss/m68k/io-read.bak > $NEWLIB_VERSION/libgloss/m68k/io-read.c \
-  && rm $NEWLIB_VERSION/libgloss/m68k/io-read.bak \
-  && mv $NEWLIB_VERSION/libgloss/m68k/io-write.c $NEWLIB_VERSION/libgloss/m68k/io-write.bak \
-  && sed -e 's/ssize_t/_READ_WRITE_RETURN_TYPE/g' $NEWLIB_VERSION/libgloss/m68k/io-write.bak > $NEWLIB_VERSION/libgloss/m68k/io-write.c \
-  && rm $NEWLIB_VERSION/libgloss/m68k/io-write.bak \
+  && tar jxf ../downloads/$BINUTILS_VERSION.tar.bz2 \
+  && pushd $BINUTILS_VERSION && patch -p1 </tmp/patch/binutils-2.19.1-tms9900-1.7.patch && popd \
+  && tar jxf ../downloads/$GCC_VERSION.tar.bz2 \
+  && pushd $GCC_VERSION && patch -p1 </tmp/patch/gcc-4.4.0-tms9900-1.19.patch && popd \
+  && tar zxf ../downloads/$MPFR_VERSION.tar.gz && mv $MPFR_VERSION /tmp/build/$GCC_VERSION/mpfr \
+  && tar zxf ../downloads/$GMP_VERSION.tar.gz && mv $GMP_VERSION /tmp/build/$GCC_VERSION/gmp \
+  && mkdir elf2ea5 && tar zxf /tmp/patch/elf2ea5.tar.gz -C elf2ea5 \
+  && mkdir elf2cart && tar zxf /tmp/patch/elf2cart.tar.gz -C elf2cart \
+  && unzip /tmp/patch/ea5split.zip \ 
+  && rm -v /tmp/downloads/* /tmp/patch/* \
   &&  mkdir /tmp/build/binutils-obj && cd /tmp/build/binutils-obj \
-  && ../$BINUTILS_VERSION/configure --prefix=$PREFIX --target=$TARGET \
+  && ../$BINUTILS_VERSION/configure --prefix=$PREFIX --target=$TARGET --disable-build-warnings \
   && make \
   && make install \
   && mkdir /tmp/build/gcc-obj && cd /tmp/build/gcc-obj \
-  && ../$GCC_VERSION/configure --prefix=$PREFIX --target=$TARGET --enable-languages=$ENABLE_LANGUAGES --with-newlib --disable-libmudflap --disable-libssp --disable-libgomp --disable-libstdcxx-pch --disable-threads --disable-nls --disable-libquadmath --with-gnu-as --with-gnu-ld --without-headers \
-  && make all-gcc \
-  && make install-gcc \
-  && mkdir /tmp/build/newlib-obj && cd /tmp/build/newlib-obj \
-  && ../$NEWLIB_VERSION/configure --prefix=$PREFIX --target=$TARGET --disable-newlib-multithread --disable-newlib-io-float --enable-lite-exit --disable-newlib-supplied-syscalls \
-  && make \
+  && ../$GCC_VERSION/configure --prefix=$PREFIX --target=$TARGET --enable-languages=$ENABLE_LANGUAGES --disable-libmudflap --disable-libssp --disable-libgomp --disable-libstdcxx-pch --disable-threads --disable-nls --disable-libquadmath --with-gnu-as --with-gnu-ld --without-headers \
+  && make all-gcc all-target-libgcc \
   && make install \
   && cd /tmp/build/gcc-obj \
-  && make all-target-libgcc all-target-libstdc++-v3 \
-  && make install-target-libgcc install-target-libstdc++-v3 \
+  && make all-target-libgcc \
+  && make install-target-libgcc \
+  && cd /tmp/build/elf2ea5 && ls && make && mv elf2ea5 $PREFIX/bin/ \
+  && cd /tmp/build/elf2cart && ls && make && mv elf2cart $PREFIX/bin/ \
+  && cd /tmp/build/ea5split && ls && make && mv ea5split $PREFIX/bin/ \
   && rm -rf /tmp/build /tmp/downloads
